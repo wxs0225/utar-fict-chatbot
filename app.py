@@ -1,7 +1,7 @@
 """
 UTAR FICT Chatbot - Streamlit Web Interface
 Auto-loads from data/ folder on startup
-Users can also upload extra files anytime
+Supports both local and Streamlit Cloud deployment
 Run with: streamlit run app.py
 """
 
@@ -66,6 +66,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# ── Get API Key (Streamlit secrets or local env) ───────────────────────────────
+def get_api_key() -> str:
+    # Try Streamlit secrets first (for deployment)
+    try:
+        key = st.secrets["GROQ_API_KEY"]
+        if key:
+            return key
+    except Exception:
+        pass
+    # Then try environment variable (for local)
+    return os.environ.get("GROQ_API_KEY", "")
+
+
 # ── File Loaders ───────────────────────────────────────────────────────────────
 def load_pdf(data: bytes, name: str = "") -> str:
     try:
@@ -109,23 +122,19 @@ LOADERS = {"pdf": load_pdf, "csv": load_csv, "txt": load_txt}
 
 # ── Auto-load from data/ folder ────────────────────────────────────────────────
 def build_store_from_folder(data_dir: Path) -> SimpleVectorStore:
-    """Load all PDF/CSV/TXT files from the data/ folder automatically."""
     store = SimpleVectorStore()
     if not data_dir.exists():
         return store
-
     for path in sorted(data_dir.iterdir()):
         ext    = path.suffix.lower().lstrip(".")
         loader = LOADERS.get(ext)
         if loader:
-            data = path.read_bytes()
-            text = loader(data, name=path.name)
+            data   = path.read_bytes()
+            text   = loader(data, name=path.name)
             if text.strip():
                 store.add_document(text, source=path.name)
     return store
 
-
-# ── Add uploaded files to existing store ───────────────────────────────────────
 def add_uploads_to_store(store: SimpleVectorStore, uploaded_files) -> SimpleVectorStore:
     for uf in uploaded_files:
         ext    = uf.name.rsplit(".", 1)[-1].lower()
@@ -137,24 +146,29 @@ def add_uploads_to_store(store: SimpleVectorStore, uploaded_files) -> SimpleVect
     return store
 
 
+# ── API Key ────────────────────────────────────────────────────────────────────
+auto_api_key = get_api_key()
+
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Settings")
 
-    api_key = st.text_input(
-        "Groq API Key",
-        type="password",
-        value=os.environ.get("GROQ_API_KEY", ""),
-        help="Free at console.groq.com — no credit card needed",
-    )
-    st.caption("🆓 Groq is 100% free")
+    # Hide API key input if already loaded from secrets
+    if auto_api_key:
+        api_key = auto_api_key
+        st.success("✓ Ready to chat!")
+    else:
+        api_key = st.text_input(
+            "Groq API Key",
+            type="password",
+            help="Free at console.groq.com",
+        )
+        st.caption("🆓 Groq is 100% free")
 
     st.divider()
 
-    # ── Auto-loaded files status ───────────────────────────────────────────────
-    st.subheader("📂 Auto-loaded Files")
+    st.subheader("📂 Knowledge Base Files")
     data_dir = Path("data")
-
     if data_dir.exists():
         auto_files = [
             f for f in data_dir.iterdir()
@@ -168,23 +182,19 @@ with st.sidebar:
     else:
         st.warning("`data/` folder not found.")
 
-    if st.button("🔄 Reload data/ folder", use_container_width=True):
+    if st.button("🔄 Reload Knowledge Base", use_container_width=True):
         if "store" in st.session_state:
             del st.session_state["store"]
         st.rerun()
 
     st.divider()
 
-    # ── Extra file upload ──────────────────────────────────────────────────────
     st.subheader("➕ Upload Extra Files")
-    st.caption("Add more PDF/CSV/TXT on top of auto-loaded files.")
-
     uploaded_files = st.file_uploader(
-        "Drop files here",
+        "Add more PDF/CSV/TXT",
         type=["pdf", "csv", "txt"],
         accept_multiple_files=True,
     )
-
     if uploaded_files:
         if st.button("➕ Add to Knowledge Base", use_container_width=True):
             store = st.session_state.get("store", SimpleVectorStore())
@@ -193,7 +203,6 @@ with st.sidebar:
             st.success(f"✓ Added! Total: {len(store.chunks)} chunks")
 
     st.divider()
-
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.session_state.history  = []
@@ -202,9 +211,9 @@ with st.sidebar:
     st.caption("UTAR FICT Perak Campus · Chatbot v3.0")
 
 
-# ── Auto-load knowledge base on first run ──────────────────────────────────────
+# ── Auto-load knowledge base ───────────────────────────────────────────────────
 if "store" not in st.session_state:
-    with st.spinner("📚 Loading knowledge base from data/ folder..."):
+    with st.spinner("📚 Loading knowledge base..."):
         st.session_state.store    = build_store_from_folder(Path("data"))
         st.session_state.messages = []
         st.session_state.history  = []
@@ -212,7 +221,6 @@ if "store" not in st.session_state:
 store = st.session_state.store
 n     = len(store.chunks)
 
-# ── Status ─────────────────────────────────────────────────────────────────────
 if n:
     st.markdown(
         f'<div class="pill-green">✓ {n} chunks indexed — knowledge base ready!</div>',
@@ -220,20 +228,15 @@ if n:
     )
 else:
     st.markdown(
-        '<div class="pill-orange">'
-        '⚠ No knowledge base loaded. Put your PDF/CSV files inside the <code>data/</code> folder, '
-        'or upload them using the sidebar.'
-        '</div>',
+        '<div class="pill-orange">⚠ No knowledge base loaded. Put files in <code>data/</code> folder.</div>',
         unsafe_allow_html=True
     )
-
 
 # ── Session State ──────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "history" not in st.session_state:
     st.session_state.history  = []
-
 
 # ── Starter Questions ──────────────────────────────────────────────────────────
 if not st.session_state.messages:
@@ -243,6 +246,8 @@ if not st.session_state.messages:
         "What is the word count for Project II?",
         "How do I write a literature review?",
         "What is the report binding format?",
+        "How often should I meet my supervisor?",
+        "What happens if I plagiarise?",
     ]
     cols = st.columns(2)
     for i, q in enumerate(starters):
@@ -250,13 +255,11 @@ if not st.session_state.messages:
             st.session_state.pending_query = q
             st.rerun()
 
-
 # ── Render Chat History ────────────────────────────────────────────────────────
 for msg in st.session_state.messages:
     avatar = "🧑‍🎓" if msg["role"] == "user" else "🤖"
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
-
 
 # ── Chat Input ─────────────────────────────────────────────────────────────────
 if "pending_query" in st.session_state:
@@ -264,15 +267,13 @@ if "pending_query" in st.session_state:
 else:
     query = st.chat_input("Ask about FYP, handbook rules, procedures…")
 
-
 # ── Generate Answer ────────────────────────────────────────────────────────────
 if query:
     if not api_key:
         st.error("Enter your Groq API key in the sidebar first.")
         st.stop()
-
     if not n:
-        st.error("Knowledge base is empty. Put your files in the data/ folder or upload them in the sidebar.")
+        st.error("Knowledge base is empty. Put your files in the data/ folder.")
         st.stop()
 
     st.session_state.messages.append({"role": "user", "content": query})
