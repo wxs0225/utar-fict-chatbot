@@ -97,18 +97,22 @@ def load_pdf(data: bytes, name: str = "") -> str:
         return ""
 
 def load_csv(data: bytes, name: str = "") -> str:
-    try:
-        content = data.decode("utf-8-sig")
-        reader  = csv.DictReader(io.StringIO(content))
-        lines   = []
-        for row in reader:
-            pairs = [f"{k}: {v}" for k, v in row.items() if v and v.strip()]
-            if pairs:
-                lines.append("  |  ".join(pairs))
-        return "\n".join(lines)
-    except Exception as e:
-        st.error(f"CSV read error ({name}): {e}")
-        return ""
+    for encoding in ["utf-8-sig", "utf-8", "latin-1", "cp1252"]:
+        try:
+            content = data.decode(encoding)
+            reader  = csv.DictReader(io.StringIO(content))
+            lines   = []
+            for row in reader:
+                pairs = [f"{k}: {v}" for k, v in row.items() if v and v.strip()]
+                if pairs:
+                    lines.append("  |  ".join(pairs))
+            return "\n".join(lines)
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            st.error(f"CSV read error ({name}): {e}")
+            return ""
+    return ""
 
 def load_txt(data: bytes, name: str = "") -> str:
     try:
